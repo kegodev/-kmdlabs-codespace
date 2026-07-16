@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#171916">
+  <title>Coding Space — KM Digital Labs</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@500;600&display=swap" rel="stylesheet">
+  <!-- Link to External CSS -->
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">
+    <span class="brand-mark" aria-hidden="true">
+      <svg viewBox="0 0 32 32" fill="none">
+        <path d="M7 24V8h4v6.1L17.2 8H22l-7.2 7.1L23.5 24h-5.2L12 17.3l-1 1V24H7Z" fill="currentColor"/>
+        <path d="M23.5 8H26v16h-2.5V8Z" fill="#cdd9c8"/>
+      </svg>
+    </span>
+    <span class="brand-copy">
+      <span class="name">KM DIGITAL LABS</span>
+      <span class="sub"><strong>CodeSpace</strong> · multi-file compiler</span>
+    </span>
+  </div>
+  <div class="actions">
+    <a class="site-home-link" href="index.html" title="Back to KM Digital Labs website" aria-label="Back to KM Digital Labs website">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+      <span>Website</span>
+    </a>
+    <div class="autorun">
+      auto-run
+      <div class="toggle on" id="autoToggle"><div class="knob"></div></div>
+    </div>
+    <button class="btn" id="downloadBtn" title="Download active file">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 10l5 5 5-5M4 21h16"/></svg>
+      <span class="btn-label">Download</span>
+    </button>
+    <button class="btn" id="resetBtn" title="Reset workspace">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 3-6.7M3 4v5h5"/></svg>
+      <span class="btn-label">Reset</span>
+    </button>
+    <button class="btn primary" id="runBtn" title="Compile (Ctrl/Cmd + Enter)">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 4l14 8-14 8V4z"/></svg>
+      <span class="btn-label">Compile</span>
+    </button>
+  </div>
+</div>
+
+<div class="main" role="main" aria-label="Coding workspace">
+  <div class="sidebar" id="sidebar">
+    <div class="sidebar-head">
+      <span>Files</span>
+      <div class="sidebar-icons">
+        <button class="icon-btn" id="newFileBtn" title="New file" aria-label="New file">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+        </button>
+        <button class="icon-btn" id="uploadBtn" title="Upload files" aria-label="Upload files">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 16V4M6 10l6-6 6 6M4 20h16"/></svg>
+        </button>
+        <button class="icon-btn" id="uploadFolderBtn" title="Upload folder" aria-label="Upload folder">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/><path d="M12 11v4M10 13h4"/></svg>
+        </button>
+      </div>
+    </div>
+    <input type="file" id="fileInput" multiple style="display:none"
+      accept=".html,.htm,.css,.js,.mjs,.ts,.tsx,.jsx,.json,.php,.md,.markdown,.py,.txt,.xml,.yml,.yaml,.svg,.png,.jpg,.jpeg,.gif,.webp">
+    <input type="file" id="folderInput" webkitdirectory directory multiple style="display:none">
+    <div class="file-list" id="fileList"></div>
+    <div class="drop-hint">drag &amp; drop files or whole folders here</div>
+  </div>
+
+  <div class="editor-pane" id="editorPane">
+    <div class="editor-topline" id="editorTopline"></div>
+    <div class="editor-wrap" id="editorWrap"></div>
+    <div class="editor-status">
+      <span id="saveStatus" class="saved">saved locally</span>
+      <span id="cursorStatus">Ln 1, Col 1</span>
+    </div>
+  </div>
+
+  <div class="preview-pane closed" id="previewPane">
+    <div class="closed-strip">
+      <span class="dot"></span>
+      <button class="open-btn" id="openCompilerBtn" title="Open compiler">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 4l14 8-14 8V4z"/></svg>
+        Preview
+      </button>
+    </div>
+    <div class="preview-note" id="previewNote"></div>
+    <div class="preview-bar">
+      <div class="traffic"><span></span><span></span><span></span></div>
+      <div class="urlbar">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        kmdlabs://live-preview
+      </div>
+      <div class="preview-tools">
+        <button class="icon-btn device-btn active" data-preview-size="desktop" title="Desktop preview" aria-label="Desktop preview">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+        </button>
+        <button class="icon-btn device-btn" data-preview-size="tablet" title="Tablet preview" aria-label="Tablet preview">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M11 18h2"/></svg>
+        </button>
+        <button class="icon-btn device-btn" data-preview-size="mobile" title="Mobile preview" aria-label="Mobile preview">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/></svg>
+        </button>
+        <button class="icon-btn" id="openNewTabBtn" title="Open preview in new tab" aria-label="Open preview in new tab">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 3h7v7M10 14L21 3M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"/></svg>
+        </button>
+        <button class="icon-btn" id="closeCompilerBtn" title="Close compiler" aria-label="Close compiler">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+    </div>
+    <div class="preview-stage" id="previewStage">
+      <iframe id="preview" title="Live preview" sandbox="allow-scripts allow-forms allow-modals allow-popups allow-downloads"></iframe>
+    </div>
+    <div class="console" id="consolePanel">
+      <div class="console-head">
+        <span>Console</span>
+        <div style="display:flex;align-items:center;gap:8px">
+          <button class="console-clear" id="clearConsole">clear</button>
+          <button class="icon-btn" id="toggleConsoleBtn" title="Collapse console" aria-label="Collapse console">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 15l6-6 6 6"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="console-body" id="consoleBody">
+        <div class="console-empty">// output will appear here</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<nav class="mobile-dock" aria-label="Workspace views">
+  <button type="button" data-mobile-view="files">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>
+    Files
+  </button>
+  <button type="button" data-mobile-view="editor" class="active">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6M14 4l-4 16"/></svg>
+    Editor
+  </button>
+  <button type="button" data-mobile-view="preview">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 4l14 8-14 8V4z"/></svg>
+    Preview
+  </button>
+</nav>
+
+<!-- Link to External JS -->
+<script src="script.js"></script>
+</body>
+</html>
