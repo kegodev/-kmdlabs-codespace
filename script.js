@@ -24,23 +24,19 @@ const EXT_MAP = {
   gif:{color:'var(--c-img)',lang:'image',runnable:false,binary:true},
   webp:{color:'var(--c-img)',lang:'image',runnable:false,binary:true}
 };
-
 function basename(path){
   const parts = path.split('/');
   return parts[parts.length-1];
 }
-
 function dirOf(path){
   const idx = path.lastIndexOf('/');
   return idx === -1 ? '' : path.slice(0, idx);
 }
-
 function extOf(path){
   const b = basename(path);
   const parts = b.split('.');
   return parts.length > 1 ? parts.pop().toLowerCase() : '';
 }
-
 function typeInfo(path){
   return EXT_MAP[extOf(path)] || {color:'var(--c-other)',lang:'text',runnable:false};
 }
@@ -149,7 +145,6 @@ function setSaveStatus(text, state){
   saveStatus.textContent = text;
   saveStatus.className = state || '';
 }
-
 function saveWorkspace(){
   try{
     localStorage.setItem(STORAGE_KEY, JSON.stringify({files, activeFile, collapsedFolders:[...collapsedFolders]}));
@@ -159,13 +154,11 @@ function saveWorkspace(){
     console.warn('Workspace could not be saved locally:', error);
   }
 }
-
 function scheduleSave(){
   setSaveStatus('saving…', 'saving');
   clearTimeout(saveTimer);
   saveTimer = setTimeout(saveWorkspace, 260);
 }
-
 function restoreWorkspace(){
   try{
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -180,7 +173,6 @@ function restoreWorkspace(){
     return false;
   }
 }
-
 if(!restoreWorkspace()) loadDefaults();
 
 /* ---------------- sidebar tree rendering ---------------- */
@@ -188,11 +180,9 @@ const fileList = document.getElementById('fileList');
 const folderIconSVG = '<svg class="folder-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>';
 const deleteButtonHTML = '<button type="button" class="row-action del" title="Delete" aria-label="Delete"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 10v6M14 10v6"/></svg></button>';
 const renameButtonHTML = '<button type="button" class="row-action rename" title="Rename" aria-label="Rename"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4L16.5 3.5z"/></svg></button>';
-
 function escapeHTML(value){
   return String(value).replace(/[&<>'"]/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char]));
 }
-
 function normalizeUserPath(value){
   return String(value || '').trim().replace(/\\/g,'/').replace(/^\/+|\/+$/g,'').replace(/\/{2,}/g,'/');
 }
@@ -237,13 +227,7 @@ function renderTreeLevel(node, container, depth, prefix){
     });
     row.querySelector('.del').addEventListener('click', e => {
       e.stopPropagation();
-      if(!confirm('Delete folder "'+folderName+'" and everything inside it?')) return;
-      Object.keys(files).forEach(path => { if(path.startsWith(fullPath+'/')) delete files[path]; });
-      if(activeFile && activeFile.startsWith(fullPath+'/')) activeFile = Object.keys(files)[0] || null;
-      renderFileList();
-      renderEditor();
-      scheduleRun();
-      scheduleSave();
+      requestDelete({kind:'folder', path:fullPath, label:folderName});
     });
     container.appendChild(row);
     if(expanded) renderTreeLevel(node.folders[folderName], container, depth+1, fullPath);
@@ -258,6 +242,7 @@ function renderTreeLevel(node, container, depth, prefix){
     row.innerHTML = '<span class="sq" style="background:'+info.color+'"></span><span class="fname">'+escapeHTML(file.name)+'</span><span class="row-actions">' + renameButtonHTML + deleteButtonHTML + '</span>';
     row.addEventListener('click', e => {
       if(e.target.closest('.row-action')) return;
+      if(isMobileLayout() && document.body.classList.contains('file-manage-mode')) return;
       activeFile = file.path;
       renderFileList();
       renderEditor();
@@ -280,41 +265,313 @@ function renderTreeLevel(node, container, depth, prefix){
     });
     row.querySelector('.del').addEventListener('click', e => {
       e.stopPropagation();
-      if(!confirm('Delete '+file.path+'?')) return;
-      delete files[file.path];
-      if(activeFile === file.path) activeFile = Object.keys(files)[0] || null;
-      renderFileList();
-      renderEditor();
-      scheduleRun();
-      scheduleSave();
+      requestDelete({kind:'file', path:file.path, label:file.name});
     });
     container.appendChild(row);
   });
 }
 
+
+/* ---------------- mobile file management ---------------- */
+const manageFilesBtn = document.getElementById('manageFilesBtn');
+const deleteSheet = document.getElementById('deleteSheet');
+const deleteSheetMessage = document.getElementById('deleteSheetMessage');
+const cancelDeleteBtn = document.getElementById('cancelDeleteBtn');
+const confirmDeleteBtn = document.getElementById('confirmDeleteBtn');
+const deleteSheetBackdrop = document.getElementById('deleteSheetBackdrop');
+let pendingDelete = null;
+
+function setFileManageMode(enabled){
+  document.body.classList.toggle('file-manage-mode', enabled);
+  manageFilesBtn?.classList.toggle('active', enabled);
+  manageFilesBtn?.setAttribute('aria-pressed', String(enabled));
+}
+manageFilesBtn?.addEventListener('click', () => {
+  setFileManageMode(!document.body.classList.contains('file-manage-mode'));
+});
+
+function closeDeleteSheet(){
+  deleteSheet.classList.remove('open');
+  deleteSheet.setAttribute('aria-hidden','true');
+  pendingDelete = null;
+}
+function completeDelete(item){
+  if(!item) return;
+  if(item.kind === 'folder'){
+    Object.keys(files).forEach(path => { if(path.startsWith(item.path + '/')) delete files[path]; });
+    if(activeFile && activeFile.startsWith(item.path + '/')) activeFile = Object.keys(files)[0] || null;
+  }else{
+    delete files[item.path];
+    if(activeFile === item.path) activeFile = Object.keys(files)[0] || null;
+  }
+  renderFileList();
+  renderEditor();
+  scheduleRun();
+  scheduleSave();
+  if(isMobileLayout()) setFileManageMode(false);
+}
+function requestDelete(item){
+  const label = item.kind === 'folder' ? 'folder "' + item.label + '" and everything inside it' : 'file "' + item.path + '"';
+  if(!isMobileLayout()){
+    if(confirm('Delete ' + label + '?')) completeDelete(item);
+    return;
+  }
+  pendingDelete = item;
+  deleteSheetMessage.textContent = 'Delete ' + label + '? This cannot be undone after the workspace is saved.';
+  deleteSheet.classList.add('open');
+  deleteSheet.setAttribute('aria-hidden','false');
+  setTimeout(() => confirmDeleteBtn.focus(), 0);
+}
+cancelDeleteBtn?.addEventListener('click', closeDeleteSheet);
+deleteSheetBackdrop?.addEventListener('click', closeDeleteSheet);
+confirmDeleteBtn?.addEventListener('click', () => {
+  const item = pendingDelete;
+  closeDeleteSheet();
+  completeDelete(item);
+});
+document.addEventListener('keydown', event => {
+  if(event.key === 'Escape' && deleteSheet.classList.contains('open')) closeDeleteSheet();
+});
+
 /* ---------------- editor rendering ---------------- */
 const editorWrap = document.getElementById('editorWrap');
 const editorTopline = document.getElementById('editorTopline');
 let currentTextarea = null;
+let currentAutocomplete = null;
+
+const HTML_VOID_TAGS = new Set(['area','base','br','col','embed','hr','img','input','link','meta','param','source','track','wbr']);
+const HTML_TAGS = ['html','head','body','title','meta','link','style','script','header','nav','main','section','article','aside','footer','div','span','h1','h2','h3','h4','h5','h6','p','a','button','form','label','input','textarea','select','option','ul','ol','li','img','picture','source','video','audio','canvas','table','thead','tbody','tr','th','td','br','hr'];
+const CSS_SNIPPETS = [
+  ['display','display: flex;','CSS property'],['display-grid','display: grid;','CSS property'],['position','position: relative;','CSS property'],
+  ['color','color: #10110f;','CSS property'],['background','background: #f5f2e9;','CSS property'],['margin','margin: 0;','CSS property'],
+  ['padding','padding: 16px;','CSS property'],['border','border: 1px solid #dcd8cd;','CSS property'],['radius','border-radius: 12px;','CSS property'],
+  ['width','width: 100%;','CSS property'],['height','height: 100%;','CSS property'],['max-width','max-width: 1200px;','CSS property'],
+  ['font-size','font-size: 16px;','CSS property'],['font-family','font-family: Arial, sans-serif;','CSS property'],['font-weight','font-weight: 600;','CSS property'],
+  ['align-items','align-items: center;','Flexbox'],['justify-content','justify-content: center;','Flexbox'],['gap','gap: 16px;','Layout'],
+  ['grid-columns','grid-template-columns: repeat(3, 1fr);','CSS Grid'],['transition','transition: 0.2s ease;','Animation'],
+  ['media','@media (max-width: 768px) {\n  \n}','Responsive rule']
+];
+const JS_SNIPPETS = [
+  ['console.log','console.log();','JavaScript'],['const','const name = value;','Variable'],['let','let value = 0;','Variable'],
+  ['function','function name() {\n  \n}','Function'],['arrow','const name = () => {\n  \n};','Arrow function'],
+  ['querySelector','document.querySelector(\'selector\');','DOM'],['querySelectorAll','document.querySelectorAll(\'selector\');','DOM'],
+  ['getElementById','document.getElementById(\'id\');','DOM'],['addEventListener','element.addEventListener(\'click\', () => {\n  \n});','Event'],
+  ['if','if (condition) {\n  \n}','Condition'],['if-else','if (condition) {\n  \n} else {\n  \n}','Condition'],
+  ['for','for (let i = 0; i < items.length; i++) {\n  \n}','Loop'],['forEach','items.forEach((item) => {\n  \n});','Loop'],
+  ['fetch','fetch(url)\n  .then(response => response.json())\n  .then(data => console.log(data))\n  .catch(error => console.error(error));','Network'],
+  ['async','async function name() {\n  try {\n    \n  } catch (error) {\n    console.error(error);\n  }\n}','Async function']
+];
+
+function escCode(value){
+  return String(value).replace(/[&<>]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[ch]));
+}
+function token(cls, value){ return '<span class="tok-'+cls+'">'+escCode(value)+'</span>'; }
+
+function highlightJS(code){
+  const keywords = new Set(['const','let','var','function','return','if','else','for','while','do','switch','case','break','continue','new','class','extends','import','from','export','default','async','await','try','catch','finally','throw','typeof','instanceof','in','of','this','super','static','get','set','yield','delete','void']);
+  const builtins = new Set(['document','window','console','Math','JSON','Date','Array','Object','String','Number','Boolean','Promise','Set','Map','localStorage','sessionStorage','fetch','URL','RegExp']);
+  const constants = new Set(['true','false','null','undefined','NaN','Infinity']);
+  let out='', i=0;
+  while(i<code.length){
+    const ch=code[i], next=code[i+1];
+    if(ch==='/' && next==='/'){
+      let j=code.indexOf('\n',i); if(j<0) j=code.length;
+      out+=token('comment',code.slice(i,j)); i=j; continue;
+    }
+    if(ch==='/' && next==='*'){
+      let j=code.indexOf('*/',i+2); j=j<0?code.length:j+2;
+      out+=token('comment',code.slice(i,j)); i=j; continue;
+    }
+    if(ch==='"' || ch==="'" || ch==='`'){
+      const q=ch; let j=i+1;
+      while(j<code.length){ if(code[j]==='\\'){j+=2;continue;} if(code[j]===q){j++;break;} j++; }
+      out+=token('string',code.slice(i,j)); i=j; continue;
+    }
+    if(/[0-9]/.test(ch) || (ch==='.' && /[0-9]/.test(next||''))){
+      let j=i+1; while(j<code.length && /[\w.xobA-Fa-f]/.test(code[j])) j++;
+      out+=token('number',code.slice(i,j)); i=j; continue;
+    }
+    if(/[A-Za-z_$]/.test(ch)){
+      let j=i+1; while(j<code.length && /[\w$]/.test(code[j])) j++;
+      const word=code.slice(i,j); let k=j; while(/\s/.test(code[k]||'')) k++;
+      if(keywords.has(word)) out+=token('keyword',word);
+      else if(constants.has(word)) out+=token(word==='true'||word==='false'?'boolean':'constant',word);
+      else if(builtins.has(word)) out+=token('builtin',word);
+      else if(code[k]==='(') out+=token('function',word);
+      else out+=escCode(word);
+      i=j; continue;
+    }
+    if(/[+\-*%=!<>?&|~^]/.test(ch)) out+=token('operator',ch); else if(/[{}()[\].,;:]/.test(ch)) out+=token('punctuation',ch); else out+=escCode(ch);
+    i++;
+  }
+  return out;
+}
+
+function highlightCSS(code){
+  let out='', i=0, depth=0;
+  while(i<code.length){
+    const ch=code[i], next=code[i+1];
+    if(ch==='/' && next==='*'){
+      let j=code.indexOf('*/',i+2); j=j<0?code.length:j+2;
+      out+=token('comment',code.slice(i,j)); i=j; continue;
+    }
+    if(ch==='"' || ch==="'"){
+      const q=ch; let j=i+1; while(j<code.length){if(code[j]==='\\'){j+=2;continue;}if(code[j]===q){j++;break;}j++;}
+      out+=token('string',code.slice(i,j));i=j;continue;
+    }
+    if(ch==='#' && /[0-9A-Fa-f]/.test(next||'')){
+      let j=i+1;while(j<code.length && /[0-9A-Fa-f]/.test(code[j]))j++;
+      out+=token('number',code.slice(i,j));i=j;continue;
+    }
+    if(/[0-9]/.test(ch) || (ch==='.' && /[0-9]/.test(next||''))){
+      let j=i+1;while(j<code.length && /[0-9A-Za-z.%_-]/.test(code[j]))j++;
+      out+=token('number',code.slice(i,j));i=j;continue;
+    }
+    if(ch==='@'){
+      let j=i+1;while(j<code.length && /[\w-]/.test(code[j]))j++;
+      out+=token('keyword',code.slice(i,j));i=j;continue;
+    }
+    if(/[A-Za-z_-]/.test(ch)){
+      let j=i+1;while(j<code.length && /[\w-]/.test(code[j]))j++;
+      const word=code.slice(i,j);let k=j;while(/\s/.test(code[k]||''))k++;
+      const before=code.slice(0,i).trimEnd().slice(-1);
+      if(word.startsWith('--')) out+=token('variable',word);
+      else if(depth>0 && code[k]===':') out+=token('property',word);
+      else if(depth===0 || before==='.' || before==='#' || before==='>' || before==='+' || before==='~') out+=token('selector',word);
+      else out+=token('string',word);
+      i=j;continue;
+    }
+    if(ch==='{') depth++; if(ch==='}') depth=Math.max(0,depth-1);
+    if(/[{}();,:>+~\[\]=]/.test(ch)) out+=token('punctuation',ch); else out+=escCode(ch);
+    i++;
+  }
+  return out;
+}
+
+function findTagEnd(code,start){
+  let quote=null;
+  for(let i=start+1;i<code.length;i++){
+    const ch=code[i];
+    if(quote){if(ch==='\\')i++;else if(ch===quote)quote=null;}
+    else if(ch==='"'||ch==="'")quote=ch;else if(ch==='>')return i;
+  }
+  return code.length-1;
+}
+function highlightHTMLTag(raw){
+  let out='',i=0;
+  if(raw[i]==='<'){out+=token('punctuation','<');i++;}
+  if(raw[i]==='/'){out+=token('punctuation','/');i++;}
+  if(raw[i]==='!'){
+    return token('doctype',raw);
+  }
+  while(i<raw.length && /\s/.test(raw[i])){out+=escCode(raw[i]);i++;}
+  let j=i;while(j<raw.length && /[\w:-]/.test(raw[j]))j++;
+  if(j>i){out+=token('tag',raw.slice(i,j));i=j;}
+  while(i<raw.length){
+    const ch=raw[i];
+    if(ch==='"'||ch==="'"){
+      const q=ch;let k=i+1;while(k<raw.length){if(raw[k]==='\\')k+=2;else if(raw[k]===q){k++;break;}else k++;}
+      out+=token('string',raw.slice(i,k));i=k;continue;
+    }
+    if(/[A-Za-z_:]/.test(ch)){
+      let k=i+1;while(k<raw.length && /[\w:.-]/.test(raw[k]))k++;
+      out+=token('attr',raw.slice(i,k));i=k;continue;
+    }
+    if(ch==='=')out+=token('operator',ch);else if(ch==='>'||ch==='/')out+=token('punctuation',ch);else out+=escCode(ch);
+    i++;
+  }
+  return out;
+}
+function highlightHTML(code){
+  let out='',i=0;
+  while(i<code.length){
+    if(code.startsWith('<!--',i)){
+      let j=code.indexOf('-->',i+4);j=j<0?code.length:j+3;
+      out+=token('comment',code.slice(i,j));i=j;continue;
+    }
+    if(code[i]==='<'){
+      const end=findTagEnd(code,i);const raw=code.slice(i,end+1);const match=raw.match(/^<\s*([A-Za-z][\w:-]*)/);const tagName=match?match[1].toLowerCase():'';
+      out+=highlightHTMLTag(raw);i=end+1;
+      if(tagName==='style' || tagName==='script'){
+        const close='</'+tagName+'>';const closeAt=code.toLowerCase().indexOf(close,i);
+        if(closeAt>=0){
+          const inner=code.slice(i,closeAt);out+=tagName==='style'?highlightCSS(inner):highlightJS(inner);
+          out+=highlightHTMLTag(code.slice(closeAt,closeAt+close.length));i=closeAt+close.length;
+        }
+      }
+      continue;
+    }
+    let j=code.indexOf('<',i);if(j<0)j=code.length;
+    out+='<span class="tok-text">'+escCode(code.slice(i,j))+'</span>';i=j;
+  }
+  return out;
+}
+function highlightCode(code,lang){
+  if(lang==='html') return highlightHTML(code);
+  if(lang==='css') return highlightCSS(code);
+  if(lang==='javascript' || lang==='typescript') return highlightJS(code);
+  if(lang==='json') return highlightJS(code);
+  return escCode(code);
+}
+
+function findUnclosedHTMLTag(source){
+  const stack=[]; const rx=/<\/?([A-Za-z][\w:-]*)\b[^>]*>/g; let m;
+  while((m=rx.exec(source))){
+    const full=m[0],name=m[1].toLowerCase();
+    if(full.startsWith('</')){
+      const at=stack.lastIndexOf(name); if(at>=0) stack.splice(at,1);
+    }else if(!full.endsWith('/>') && !HTML_VOID_TAGS.has(name)) stack.push(name);
+  }
+  return stack[stack.length-1]||'';
+}
+function currentWord(ta){
+  const before=ta.value.slice(0,ta.selectionStart);const m=before.match(/[A-Za-z_$-][\w$-]*$/);return m?m[0]:'';
+}
+function suggestionsFor(ta,lang){
+  const before=ta.value.slice(0,ta.selectionStart);const word=currentWord(ta);const items=[];
+  if(lang==='html'){
+    if(/(?:^|\s)html$/i.test(before)) items.push({label:'HTML5 document',detail:'Complete page structure',kind:'snippet',insert:'<!DOCTYPE html>\n<html lang="en">\n<head>\n  <meta charset="UTF-8">\n  <meta name="viewport" content="width=device-width, initial-scale=1.0">\n  <title>Document</title>\n</head>\n<body>\n  \n</body>\n</html>',replace:4,caretBack:17});
+    if(/!$/.test(before)) items.push({label:'!',detail:'HTML5 boilerplate',kind:'snippet',insert:'<!DOCTYPE html>\n<html lang="en">\n<head>\n  <meta charset="UTF-8">\n  <meta name="viewport" content="width=device-width, initial-scale=1.0">\n  <title>Document</title>\n</head>\n<body>\n  \n</body>\n</html>',replace:1,caretBack:17});
+    const closeMatch=before.match(/<\/([\w-]*)$/);
+    if(closeMatch){
+      const open=findUnclosedHTMLTag(before.slice(0,before.length-closeMatch[0].length));
+      if(open && open.startsWith(closeMatch[1].toLowerCase())) items.push({label:'</'+open+'>',detail:'Close nearest open tag',kind:'tag',insert:'</'+open+'>',replace:closeMatch[0].length});
+    }else{
+      const tagMatch=before.match(/<([\w-]*)$/);
+      if(tagMatch){
+        const q=tagMatch[1].toLowerCase();
+        HTML_TAGS.filter(t=>t.startsWith(q)).slice(0,12).forEach(t=>{
+          const insert=HTML_VOID_TAGS.has(t)?'<'+t+'>':'<'+t+'></'+t+'>';
+          items.push({label:insert,detail:HTML_VOID_TAGS.has(t)?'HTML element':'Paired HTML element',kind:'tag',insert,replace:tagMatch[0].length,caretBack:HTML_VOID_TAGS.has(t)?0:t.length+3});
+        });
+      }else if(word.length>=2){
+        HTML_TAGS.filter(t=>t.startsWith(word.toLowerCase())).slice(0,8).forEach(t=>items.push({label:'<'+t+'>',detail:'HTML element',kind:'tag',insert:HTML_VOID_TAGS.has(t)?'<'+t+'>':'<'+t+'></'+t+'>',replace:word.length,caretBack:HTML_VOID_TAGS.has(t)?0:t.length+3}));
+      }
+    }
+  }else if(lang==='css'){
+    if(word.length>=1) CSS_SNIPPETS.filter(x=>x[0].startsWith(word.toLowerCase())).slice(0,10).forEach(x=>items.push({label:x[0],detail:x[2],kind:'css',insert:x[1],replace:word.length,caretBack:x[1].includes('\n  \n')?2:0}));
+  }else if(lang==='javascript' || lang==='typescript'){
+    if(word.length>=1) JS_SNIPPETS.filter(x=>x[0].toLowerCase().startsWith(word.toLowerCase())).slice(0,10).forEach(x=>items.push({label:x[0],detail:x[2],kind:'js',insert:x[1],replace:word.length,caretBack:x[1].includes('\n  \n')?2:(x[1].endsWith(');')?2:0)}));
+  }
+  return items;
+}
 
 function renderEditor(){
   editorWrap.innerHTML = '';
+  currentAutocomplete = null;
   if(!activeFile){
     editorTopline.textContent = '';
     editorWrap.innerHTML = '<div class="editor-empty">no file open — create or upload one</div>';
     return;
   }
   const info = typeInfo(activeFile);
-  editorTopline.innerHTML = '<span class="sq" style="background:'+info.color+'"></span> '+escapeHTML(activeFile)+' <span style="color:var(--text-faint)">&middot; '+info.lang+'</span>';
+  editorTopline.innerHTML = '<span class="sq" style="background:'+info.color+'"></span> '+escapeHTML(activeFile)+' <span style="color:var(--text-faint)">&middot; '+info.lang+'</span><span class="editor-help"><strong>Tab/Enter</strong> accept suggestion · <strong>Ctrl/Cmd + Enter</strong> compile</span>';
 
   if(info.binary){
     const wrap = document.createElement('div');
     wrap.className = 'binary-note';
-    if(info.lang === 'image'){
-      wrap.innerHTML = '<img src="'+files[activeFile].content+'" alt="'+activeFile+'"><span>binary file — preview only</span>';
-    } else {
-      wrap.textContent = 'binary file — no text preview';
-    }
+    if(info.lang === 'image') wrap.innerHTML = '<img src="'+files[activeFile].content+'" alt="'+activeFile+'"><span>binary file — preview only</span>';
+    else wrap.textContent = 'binary file — no text preview';
     editorWrap.appendChild(wrap);
     return;
   }
@@ -322,55 +579,107 @@ function renderEditor(){
   const editingPath = activeFile;
   const ln = document.createElement('div');
   ln.className = 'line-numbers';
+  const stage=document.createElement('div');stage.className='code-stage';
+  const syntax=document.createElement('div');syntax.className='syntax-layer';
+  const code=document.createElement('pre');code.className='syntax-code';
+  syntax.appendChild(code);
   const ta = document.createElement('textarea');
-  ta.spellcheck = false;
-  ta.autocapitalize = 'off';
-  ta.autocomplete = 'off';
-  ta.autocorrect = 'off';
+  ta.className='code-input';
+  ta.spellcheck = false; ta.autocapitalize = 'off'; ta.autocomplete = 'off'; ta.autocorrect = 'off';
   ta.setAttribute('aria-label', 'Code editor for ' + editingPath);
   ta.value = files[editingPath].content;
-  currentTextarea = ta;
+  const popup=document.createElement('div');popup.className='autocomplete';popup.setAttribute('role','listbox');
+  stage.appendChild(syntax);stage.appendChild(ta);stage.appendChild(popup);
+  currentTextarea = ta; currentAutocomplete=popup;
+  let suggestionItems=[],selectedSuggestion=0;
 
   function updateLn(){
-    const lines = ta.value.split('\n').length;
-    let out = '';
+    const lines = ta.value.split('\n').length; let out = '';
     for(let i=1;i<=lines;i++) out += i + '\n';
     ln.textContent = out.trim();
   }
   function updateCursor(){
-    const before = ta.value.slice(0, ta.selectionStart);
-    const line = before.split('\n').length;
-    const col = before.length - before.lastIndexOf('\n');
-    cursorStatus.textContent = 'Ln ' + line + ', Col ' + col;
+    const before = ta.value.slice(0, ta.selectionStart); const line = before.split('\n').length;
+    const col = before.length - before.lastIndexOf('\n'); cursorStatus.textContent = 'Ln ' + line + ', Col ' + col;
   }
-  updateLn();
-  updateCursor();
+  function updateSyntax(){ code.innerHTML=highlightCode(ta.value,info.lang)+(ta.value.endsWith('\n')?'\n':''); syncScroll(); }
+  function syncScroll(){ code.style.transform='translate3d('+(-ta.scrollLeft)+'px,'+(-ta.scrollTop)+'px,0)'; ln.scrollTop=ta.scrollTop; }
+  function persist(){ if(!files[editingPath])return;files[editingPath].content=ta.value;updateLn();updateCursor();updateSyntax();scheduleRun(editingPath);scheduleSave(); }
+  function closeSuggestions(){popup.classList.remove('open');popup.innerHTML='';suggestionItems=[];selectedSuggestion=0;}
+  function popupPosition(){
+    const before=ta.value.slice(0,ta.selectionStart);const lines=before.split('\n');const line=lines.length-1,col=lines[lines.length-1].length;
+    const cs=getComputedStyle(ta);const lh=parseFloat(cs.lineHeight)||21;const charW=(parseFloat(cs.fontSize)||13)*.61;
+    const x=Math.max(8,Math.min(stage.clientWidth-340,parseFloat(cs.paddingLeft)+col*charW-ta.scrollLeft));
+    const y=Math.max(8,Math.min(stage.clientHeight-110,parseFloat(cs.paddingTop)+(line+1)*lh-ta.scrollTop));
+    popup.style.left=x+'px';popup.style.top=y+'px';
+  }
+  function drawSuggestions(){
+    suggestionItems=suggestionsFor(ta,info.lang);selectedSuggestion=0;
+    if(!suggestionItems.length){closeSuggestions();return;}
+    popup.innerHTML='';
+    suggestionItems.forEach((item,index)=>{
+      const btn=document.createElement('button');btn.type='button';btn.className='suggestion'+(index===0?' active':'');
+      btn.innerHTML='<span class="suggestion-main"><span class="suggestion-label">'+escapeHTML(item.label)+'</span><span class="suggestion-detail">'+escapeHTML(item.detail)+'</span></span><span class="suggestion-kind">'+escapeHTML(item.kind)+'</span>';
+      btn.addEventListener('pointerdown',e=>{e.preventDefault();acceptSuggestion(index);});popup.appendChild(btn);
+    });
+    popupPosition();popup.classList.add('open');
+  }
+  function chooseSuggestion(index){
+    if(!suggestionItems.length)return;selectedSuggestion=(index+suggestionItems.length)%suggestionItems.length;
+    [...popup.children].forEach((el,i)=>el.classList.toggle('active',i===selectedSuggestion));
+    popup.children[selectedSuggestion]?.scrollIntoView({block:'nearest'});
+  }
+  function acceptSuggestion(index=selectedSuggestion){
+    const item=suggestionItems[index];if(!item)return false;
+    const end=ta.selectionStart,start=Math.max(0,end-(item.replace||0));ta.setRangeText(item.insert,start,end,'end');
+    if(item.caretBack){const pos=ta.selectionStart-item.caretBack;ta.setSelectionRange(pos,pos);}
+    closeSuggestions();persist();ta.focus();return true;
+  }
+  function insertPair(open,close){
+    const start=ta.selectionStart,end=ta.selectionEnd,selected=ta.value.slice(start,end);
+    ta.setRangeText(open+selected+close,start,end,'end');const pos=start+open.length+(selected?selected.length:0);ta.setSelectionRange(pos,pos);persist();
+  }
+  function autoCloseHTMLTag(e){
+    if(info.lang!=='html' || e.key!=='>')return false;
+    const before=ta.value.slice(0,ta.selectionStart);const m=before.match(/<([A-Za-z][\w:-]*)(?:\s[^<>]*)?$/);
+    if(!m || before.endsWith('/') || HTML_VOID_TAGS.has(m[1].toLowerCase()))return false;
+    e.preventDefault();const tag=m[1];const pos=ta.selectionStart;ta.setRangeText('></'+tag+'>',pos,pos,'end');ta.setSelectionRange(pos+1,pos+1);persist();return true;
+  }
 
-  ta.addEventListener('input', () => {
-    if(!files[editingPath]) return;
-    files[editingPath].content = ta.value;
-    updateLn();
-    updateCursor();
-    scheduleRun();
-    scheduleSave();
-  });
-  ta.addEventListener('scroll', () => { ln.scrollTop = ta.scrollTop; });
-  ['click','keyup','select'].forEach(eventName => ta.addEventListener(eventName, updateCursor));
-  ta.addEventListener('keydown', e => {
+  updateLn();updateCursor();updateSyntax();
+  ta.addEventListener('input',()=>{persist();drawSuggestions();});
+  ta.addEventListener('scroll',()=>{syncScroll();if(popup.classList.contains('open'))popupPosition();});
+  ['click','keyup','select'].forEach(eventName=>ta.addEventListener(eventName,()=>{updateCursor();if(eventName==='click')drawSuggestions();}));
+  ta.addEventListener('blur',()=>setTimeout(closeSuggestions,120));
+  ta.addEventListener('keydown',e=>{
+    if(popup.classList.contains('open')){
+      if(e.key==='ArrowDown'){e.preventDefault();chooseSuggestion(selectedSuggestion+1);return;}
+      if(e.key==='ArrowUp'){e.preventDefault();chooseSuggestion(selectedSuggestion-1);return;}
+      if(e.key==='Enter' || e.key==='Tab'){e.preventDefault();acceptSuggestion();return;}
+      if(e.key==='Escape'){e.preventDefault();closeSuggestions();return;}
+    }
+    if(autoCloseHTMLTag(e))return;
+    const pairs={'(' : ')','[':']','{':'}','"':'"',"'":"'",'`':'`'};
+    if(pairs[e.key] && !e.ctrlKey && !e.metaKey && !e.altKey){
+      const next=ta.value[ta.selectionStart];
+      if((e.key==='"'||e.key==="'"||e.key==='`') && next===e.key && ta.selectionStart===ta.selectionEnd){e.preventDefault();ta.setSelectionRange(ta.selectionStart+1,ta.selectionStart+1);return;}
+      e.preventDefault();insertPair(e.key,pairs[e.key]);return;
+    }
+    if([')',']','}'].includes(e.key) && ta.value[ta.selectionStart]===e.key && ta.selectionStart===ta.selectionEnd){e.preventDefault();ta.setSelectionRange(ta.selectionStart+1,ta.selectionStart+1);return;}
+    if(e.key==='Enter'){
+      const start=ta.selectionStart,end=ta.selectionEnd;const before=ta.value.slice(0,start);const line=before.slice(before.lastIndexOf('\n')+1);const indent=(line.match(/^\s*/)||[''])[0];
+      const prev=ta.value[start-1],next=ta.value[start];
+      if((prev==='{'&&next==='}')||(prev==='['&&next===']')||(prev==='('&&next===')')){
+        e.preventDefault();const inner=indent+'  ';ta.setRangeText('\n'+inner+'\n'+indent,start,end,'end');ta.setSelectionRange(start+1+inner.length,start+1+inner.length);persist();return;
+      }
+      if(indent){e.preventDefault();ta.setRangeText('\n'+indent,start,end,'end');persist();return;}
+    }
     if(e.key === 'Tab'){
-      e.preventDefault();
-      const start = ta.selectionStart, end = ta.selectionEnd;
-      ta.setRangeText('  ', start, end, 'end');
-      if(files[editingPath]) files[editingPath].content = ta.value;
-      updateLn();
-      updateCursor();
-      scheduleRun();
-      scheduleSave();
+      e.preventDefault();const start=ta.selectionStart,end=ta.selectionEnd;ta.setRangeText('  ',start,end,'end');persist();
     }
   });
 
-  editorWrap.appendChild(ln);
-  editorWrap.appendChild(ta);
+  editorWrap.appendChild(ln);editorWrap.appendChild(stage);
 }
 
 /* ---------------- new file ---------------- */
@@ -413,7 +722,6 @@ function ingestEntries(entries){
     else reader.readAsText(file);
   });
 }
-
 function filesToEntries(fileListObj){
   return Array.from(fileListObj).map(f => ({
     file: f,
@@ -489,13 +797,29 @@ const autoToggle = document.getElementById('autoToggle');
 autoToggle.addEventListener('click', () => {
   autoRun = !autoRun;
   autoToggle.classList.toggle('on', autoRun);
+  if(autoRun && previewOpen) compile(true);
 });
 
-let debounceTimer;
-function scheduleRun(){
+let compileTimer = 0;
+let compileFrame = 0;
+let pendingChangedPath = null;
+const FAST_COMPILE_DELAY = 90;
+
+function scheduleRun(changedPath = null){
   if(!autoRun || !previewOpen) return;
-  clearTimeout(debounceTimer);
-  debounceTimer = setTimeout(compile, 500);
+  if(pendingChangedPath !== null && pendingChangedPath !== changedPath) pendingChangedPath = '';
+  else if(pendingChangedPath === null) pendingChangedPath = changedPath || '';
+  clearTimeout(compileTimer);
+  if(compileFrame) cancelAnimationFrame(compileFrame);
+  compileTimer = setTimeout(() => {
+    compileFrame = requestAnimationFrame(() => {
+      const path = pendingChangedPath;
+      pendingChangedPath = null;
+      compileFrame = 0;
+      if(path && typeInfo(path).lang === 'css' && applyFastCssUpdate(path)) return;
+      compile(false);
+    });
+  }, FAST_COMPILE_DELAY);
 }
 
 /* ---------------- responsive workspace views ---------------- */
@@ -506,21 +830,19 @@ let previewOpen = false;
 function isMobileLayout(){
   return mobileMedia.matches;
 }
-
 function setMobileView(view){
   document.body.dataset.mobileView = view;
+  if(view !== 'files') setFileManageMode(false);
   document.querySelectorAll('.mobile-dock [data-mobile-view]').forEach(button => {
     button.classList.toggle('active', button.dataset.mobileView === view);
   });
 }
-
 function openPreview(){
   previewOpen = true;
   previewPane.classList.remove('closed');
   if(isMobileLayout()) setMobileView('preview');
-  compile();
+  compile(true);
 }
-
 function closePreview(){
   if(isMobileLayout()){
     setMobileView('editor');
@@ -537,7 +859,6 @@ document.querySelectorAll('.mobile-dock [data-mobile-view]').forEach(button => {
     else setMobileView(view);
   });
 });
-
 mobileMedia.addEventListener?.('change', event => {
   if(event.matches){
     setMobileView(document.body.dataset.mobileView || 'editor');
@@ -552,7 +873,7 @@ document.getElementById('closeCompilerBtn').addEventListener('click', closePrevi
 document.getElementById('runBtn').addEventListener('click', () => {
   if(isMobileLayout()) openPreview();
   else if(!previewOpen) openPreview();
-  else compile();
+  else compile(true);
 });
 
 document.getElementById('resetBtn').addEventListener('click', () => {
@@ -570,7 +891,6 @@ const consoleBody = document.getElementById('consoleBody');
 document.getElementById('clearConsole').addEventListener('click', () => {
   consoleBody.innerHTML = '<div class="console-empty">// output will appear here</div>';
 });
-
 function logToPanel(type, args){
   const empty = consoleBody.querySelector('.console-empty');
   if(empty) empty.remove();
@@ -589,7 +909,6 @@ function logToPanel(type, args){
   consoleBody.appendChild(line);
   consoleBody.scrollTop = consoleBody.scrollHeight;
 }
-
 window.addEventListener('message', e => {
   if(e.data && e.data.__kegodev_console){
     logToPanel(e.data.level, e.data.args);
@@ -624,7 +943,6 @@ function activeFileBlob(){
   }
   return new Blob([file.content], {type:'text/plain;charset=utf-8'});
 }
-
 document.getElementById('downloadBtn').addEventListener('click', () => {
   const blob = activeFileBlob();
   if(!blob){ alert('Open a file before downloading.'); return; }
@@ -639,7 +957,7 @@ document.getElementById('downloadBtn').addEventListener('click', () => {
 });
 
 document.getElementById('openNewTabBtn').addEventListener('click', () => {
-  compile();
+  compile(true);
   const source = document.getElementById('preview').srcdoc;
   if(!source) return;
   const url = URL.createObjectURL(new Blob([source], {type:'text/html'}));
@@ -732,7 +1050,31 @@ function inlineCssAssets(cssText, cssPath){
   });
 }
 
-function compile(){
+let lastCompiledSource = '';
+let lastCompileStartedAt = 0;
+
+function flashCompileButton(){
+  const button = document.getElementById('runBtn');
+  button.classList.remove('compile-flash');
+  void button.offsetWidth;
+  button.classList.add('compile-flash');
+}
+
+function applyFastCssUpdate(path){
+  const preview = document.getElementById('preview');
+  if(!preview.contentWindow || !lastCompiledSource || !files[path]) return false;
+  preview.contentWindow.postMessage({
+    __kegodev_css_update:true,
+    path:path,
+    css:inlineCssAssets(files[path].content, path)
+  }, '*');
+  flashCompileButton();
+  return true;
+}
+
+function compile(force = false){
+  const compileStartedAt = performance.now();
+  lastCompileStartedAt = compileStartedAt;
   const entry = findEntryHtml();
   const preview = document.getElementById('preview');
 
@@ -820,7 +1162,7 @@ function compile(){
     element.setAttribute('srcset', rewritten);
   });
 
-  const consoleShim = "(function(){var send=function(level){return function(){var args=Array.prototype.slice.call(arguments);parent.postMessage({__kegodev_console:true,level:level,args:args},'*');};};console.log=send('log');console.warn=send('warn');console.error=send('error');window.addEventListener('error',function(e){parent.postMessage({__kegodev_console:true,level:'error',args:[e.message+(e.filename?' ('+e.filename+':'+e.lineno+')':'')]},'*');});window.addEventListener('unhandledrejection',function(e){parent.postMessage({__kegodev_console:true,level:'error',args:['Unhandled promise rejection:',e.reason]},'*');});})();";
+  const consoleShim = "(function(){var send=function(level){return function(){var args=Array.prototype.slice.call(arguments);parent.postMessage({__kegodev_console:true,level:level,args:args},'*');};};console.log=send('log');console.warn=send('warn');console.error=send('error');window.addEventListener('error',function(e){parent.postMessage({__kegodev_console:true,level:'error',args:[e.message+(e.filename?' ('+e.filename+':'+e.lineno+')':'')]},'*');});window.addEventListener('unhandledrejection',function(e){parent.postMessage({__kegodev_console:true,level:'error',args:['Unhandled promise rejection:',e.reason]},'*');});window.addEventListener('message',function(e){var d=e.data;if(!d||!d.__kegodev_css_update)return;var list=document.querySelectorAll('style[data-kegodev-source]'),style=null;for(var i=0;i<list.length;i++){if(list[i].getAttribute('data-kegodev-source')===d.path){style=list[i];break;}}if(!style){style=document.createElement('style');style.setAttribute('data-kegodev-source',d.path);document.head.appendChild(style);}style.textContent=d.css||'';});})();";
   const shimTag = doc.createElement('script');
   shimTag.textContent = consoleShim;
   doc.head.insertBefore(shimTag, doc.head.firstChild);
@@ -839,7 +1181,11 @@ function compile(){
     includedJs.add(path);
   });
 
-  preview.srcdoc = '<!DOCTYPE html>\n' + doc.documentElement.outerHTML;
+  const source = '<!DOCTYPE html>\n' + doc.documentElement.outerHTML;
+  if(!force && source === lastCompiledSource) return;
+  lastCompiledSource = source;
+  preview.srcdoc = source;
+  flashCompileButton();
 }
 
 renderFileList();
